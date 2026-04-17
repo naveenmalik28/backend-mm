@@ -3,12 +3,29 @@ import hmac
 
 from django.conf import settings
 from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import ValidationError
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Payment, Plan, Subscription
 from .serializers import PlanSerializer, SubscriptionSerializer
+
+
+SUPPORTED_CHECKOUT_CURRENCIES = {"INR", "USD"}
+
+
+def resolve_plan_amount(plan, requested_currency):
+    currency = (requested_currency or "INR").upper()
+    if currency not in SUPPORTED_CHECKOUT_CURRENCIES:
+        raise ValidationError({"currency": "Unsupported currency. Use INR or USD."})
+
+    if currency == "USD":
+        if plan.price_usd <= 0:
+            raise ValidationError({"currency": "USD pricing is not configured for this plan."})
+        return plan.price_usd, "USD"
+
+    return plan.price, "INR"
 
 
 class PlanListView(generics.ListAPIView):
@@ -26,11 +43,13 @@ class CheckoutView(APIView):
 
         plan_id = request.data.get("plan_id")
         plan = get_object_or_404(Plan, id=plan_id, is_active=True)
+        amount, order_currency = resolve_plan_amount(plan, request.data.get("currency"))
+
         subscription = Subscription.objects.create(user=request.user, plan=plan)
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         order = client.order.create({
-            "amount": int(plan.price * 100),
-            "currency": plan.currency,
+            "amount": int(amount * 100),
+            "currency": order_currency,
             "receipt": str(subscription.id),
         })
         return Response({
@@ -39,6 +58,7 @@ class CheckoutView(APIView):
             "currency": order["currency"],
             "subscription_id": str(subscription.id),
             "razorpay_key": settings.RAZORPAY_KEY_ID,
+            "plan": PlanSerializer(plan).data,
         })
 
 
@@ -56,11 +76,14 @@ class PaymentVerifyView(APIView):
         ).hexdigest()
         if generated_sig != data.get("razorpay_signature"):
             return Response({"error": "Invalid signature"}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount, currency = resolve_plan_amount(subscription.plan, data.get("currency"))
+
         Payment.objects.create(
             subscription=subscription,
             user=request.user,
-            amount=subscription.plan.price,
-            currency=subscription.plan.currency,
+            amount=amount,
+            currency=currency,
             payment_gateway="razorpay",
             gateway_order_id=data.get("razorpay_order_id", ""),
             gateway_payment_id=data.get("razorpay_payment_id", ""),
@@ -89,6 +112,3 @@ class CancelSubscriptionView(APIView):
         subscription.status = Subscription.STATUS_CANCELLED
         subscription.save(update_fields=["status", "updated_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-# Create your views here.

@@ -14,8 +14,8 @@ from apps.articles.serializers import (
     AdminCommentSerializer,
 )
 from apps.comments.models import Comment
-from apps.subscriptions.models import Payment, Subscription
-from apps.subscriptions.serializers import PaymentSerializer, SubscriptionSerializer
+from apps.subscriptions.models import Payment, Plan, Subscription
+from apps.subscriptions.serializers import AdminPlanSerializer, PaymentSerializer, SubscriptionSerializer
 
 from .serializers import UserSerializer
 
@@ -201,6 +201,52 @@ class AdminPaymentListView(generics.ListAPIView):
     serializer_class = PaymentSerializer
     pagination_class = None
     queryset = Payment.objects.select_related("user", "subscription").all()
+
+
+# ---------------------------------------------------------------------------
+# Plan admin CRUD
+# ---------------------------------------------------------------------------
+
+class AdminPlanListCreateView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        plans = Plan.objects.annotate(subscription_count=Count("subscriptions")).order_by("sort_order", "price", "id")
+        return Response(AdminPlanSerializer(plans, many=True).data)
+
+    def post(self, request):
+        serializer = AdminPlanSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class AdminPlanDetailView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request, pk):
+        plan = get_object_or_404(
+            Plan.objects.annotate(subscription_count=Count("subscriptions")),
+            pk=pk,
+        )
+        return Response(AdminPlanSerializer(plan).data)
+
+    def patch(self, request, pk):
+        plan = get_object_or_404(Plan, pk=pk)
+        serializer = AdminPlanSerializer(plan, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, pk):
+        plan = get_object_or_404(Plan, pk=pk)
+        if plan.subscriptions.exists():
+            return Response(
+                {"error": "Cannot delete plan with existing subscriptions."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        plan.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------

@@ -9,15 +9,19 @@ from django.utils import timezone
 class Plan(models.Model):
     name = models.CharField(max_length=100)
     slug = models.SlugField(unique=True)
+    description = models.TextField(blank=True, help_text="Short plan tagline")
     duration_days = models.PositiveIntegerField()
-    price = models.DecimalField(max_digits=10, decimal_places=2)
+    price = models.DecimalField(max_digits=10, decimal_places=2, help_text="Price in INR")
+    price_usd = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Price in USD")
     currency = models.CharField(max_length=10, default="INR")
     features = models.JSONField(default=list, blank=True)
     is_active = models.BooleanField(default=True)
+    is_popular = models.BooleanField(default=False, help_text="Highlight as recommended")
+    sort_order = models.PositiveIntegerField(default=0, help_text="Display order on frontend")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["price"]
+        ordering = ["sort_order", "price"]
 
     def __str__(self):
         return self.name

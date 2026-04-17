@@ -11,6 +11,8 @@ from .admin_views import (
     AdminCommentDeleteView,
     AdminCommentListView,
     AdminPaymentListView,
+    AdminPlanDetailView,
+    AdminPlanListCreateView,
     AdminSiteSettingsView,
     AdminSubscriptionListView,
     AdminSummaryView,
@@ -44,6 +46,9 @@ urlpatterns = [
     path("admin/comments/", AdminCommentListView.as_view(), name="admin-comments"),
     path("admin/comments/<uuid:pk>/approve/", AdminCommentApproveView.as_view(), name="admin-comment-approve"),
     path("admin/comments/<uuid:pk>/", AdminCommentDeleteView.as_view(), name="admin-comment-delete"),
+    # Admin plan CRUD
+    path("admin/plans/", AdminPlanListCreateView.as_view(), name="admin-plans"),
+    path("admin/plans/<int:pk>/", AdminPlanDetailView.as_view(), name="admin-plan-detail"),
     # Admin subscriptions / payments (read-only)
     path("admin/subscriptions/", AdminSubscriptionListView.as_view(), name="admin-subscriptions"),
     path("admin/payments/", AdminPaymentListView.as_view(), name="admin-payments"),

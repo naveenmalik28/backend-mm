@@ -5,9 +5,10 @@ from .models import Payment, Plan, Subscription
 
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
-    list_display = ("name", "duration_days", "price", "currency", "is_active")
-    list_editable = ("price", "is_active")
+    list_display = ("name", "duration_days", "price", "price_usd", "sort_order", "is_popular", "is_active")
+    list_editable = ("price", "price_usd", "sort_order", "is_popular", "is_active")
     search_fields = ("name", "slug")
+    list_filter = ("is_active", "is_popular")
 
 
 @admin.register(Subscription)
