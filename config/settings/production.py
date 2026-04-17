@@ -20,6 +20,15 @@ def _https_origin(value):
     return f"https://{value}"
 
 
+def _cloudinary_config():
+    values = {
+        "CLOUD_NAME": config("CLOUDINARY_CLOUD_NAME", default="").strip(),
+        "API_KEY": config("CLOUDINARY_API_KEY", default="").strip(),
+        "API_SECRET": config("CLOUDINARY_API_SECRET", default="").strip(),
+    }
+    return values if all(values.values()) else None
+
+
 DEBUG = False
 
 ALLOWED_HOSTS = list(
@@ -57,20 +66,19 @@ CSRF_TRUSTED_ORIGINS = list(
     )
 )
 
-DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
+_cloudinary = _cloudinary_config()
+if _cloudinary:
+    DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
+    CLOUDINARY_STORAGE = _cloudinary
 
-CLOUDINARY_STORAGE = {
-    "CLOUD_NAME": config("CLOUDINARY_CLOUD_NAME"),
-    "API_KEY": config("CLOUDINARY_API_KEY"),
-    "API_SECRET": config("CLOUDINARY_API_SECRET"),
-}
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="").strip()
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="").strip()
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.gmail.com"
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = config("EMAIL_HOST_USER")
-EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD")
+if EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = "smtp.gmail.com"
+    EMAIL_PORT = 587
+    EMAIL_USE_TLS = True
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True
