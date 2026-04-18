@@ -65,11 +65,16 @@ def _database_url():
 
 DEBUG = False
 
+DEFAULT_PUBLIC_API_DOMAIN = "api.magnivel.com"
+DEFAULT_FRONTEND_URL = "https://magnivel.com"
+DEFAULT_ADMIN_FRONTEND_URL = "https://admin.magnivel.com"
+
 ALLOWED_HOSTS = list(
     dict.fromkeys(
         [
             ".railway.app",
             ".up.railway.app",
+            DEFAULT_PUBLIC_API_DOMAIN,
             *_csv_env("ALLOWED_HOSTS"),
             *_configured_values("RAILWAY_PUBLIC_DOMAIN", "RAILWAY_PRIVATE_DOMAIN", "CUSTOM_DOMAIN"),
         ]
@@ -85,13 +90,17 @@ DATABASES = {
 }
 
 CORS_ALLOWED_ORIGINS = list(
-    dict.fromkeys(_configured_values("FRONTEND_URL", "ADMIN_FRONTEND_URL"))
+    dict.fromkeys(
+        _configured_values("FRONTEND_URL", "ADMIN_FRONTEND_URL")
+        or [DEFAULT_FRONTEND_URL, DEFAULT_ADMIN_FRONTEND_URL]
+    )
 )
 
 CSRF_TRUSTED_ORIGINS = list(
     dict.fromkeys(
         [
             *CORS_ALLOWED_ORIGINS,
+            _https_origin(config("CUSTOM_DOMAIN", default=DEFAULT_PUBLIC_API_DOMAIN).strip()),
             *[
                 _https_origin(value)
                 for value in _configured_values("RAILWAY_PUBLIC_DOMAIN", "CUSTOM_DOMAIN")
