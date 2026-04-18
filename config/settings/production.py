@@ -1,4 +1,4 @@
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import dj_database_url
 from decouple import config
@@ -11,8 +11,19 @@ def _csv_env(name):
     return [item.strip() for item in config(name, default="").split(",") if item.strip()]
 
 
+def _csv_env_values(*names):
+    values = []
+    for name in names:
+        values.extend(_csv_env(name))
+    return values
+
+
 def _configured_values(*names):
     return [value for value in (config(name, default="").strip() for name in names) if value]
+
+
+def _unique(values):
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def _https_origin(value):
@@ -21,6 +32,16 @@ def _https_origin(value):
     if value.startswith(("http://", "https://")):
         return value
     return f"https://{value}"
+
+
+def _normalized_host(value):
+    if not value:
+        return ""
+    value = value.strip()
+    if value.startswith("."):
+        return value
+    normalized = value if "://" in value else f"https://{value}"
+    return urlparse(normalized).hostname or value
 
 
 def _cloudinary_config():
@@ -66,19 +87,43 @@ def _database_url():
 DEBUG = False
 
 DEFAULT_PUBLIC_API_DOMAIN = "api.magnivel.com"
-DEFAULT_FRONTEND_URL = "https://magnivel.com"
-DEFAULT_ADMIN_FRONTEND_URL = "https://admin.magnivel.com"
+DEFAULT_FRONTEND_ORIGINS = [
+    "https://magnivel.com",
+    "https://www.magnivel.com",
+    "https://frontend-mm.vercel.app",
+]
+DEFAULT_ADMIN_FRONTEND_ORIGINS = ["https://admin.magnivel.com"]
 
-ALLOWED_HOSTS = list(
-    dict.fromkeys(
+CONFIGURED_FRONTEND_ORIGINS = _unique(
+    [
+        *_csv_env_values("CORS_ALLOWED_ORIGINS", "FRONTEND_URLS"),
+        *_configured_values("FRONTEND_URL", "ADMIN_FRONTEND_URL"),
+    ]
+)
+
+if not CONFIGURED_FRONTEND_ORIGINS:
+    CONFIGURED_FRONTEND_ORIGINS = _unique(
         [
-            ".railway.app",
-            ".up.railway.app",
-            DEFAULT_PUBLIC_API_DOMAIN,
-            *_csv_env("ALLOWED_HOSTS"),
-            *_configured_values("RAILWAY_PUBLIC_DOMAIN", "RAILWAY_PRIVATE_DOMAIN", "CUSTOM_DOMAIN"),
+            *DEFAULT_FRONTEND_ORIGINS,
+            *DEFAULT_ADMIN_FRONTEND_ORIGINS,
         ]
     )
+
+ALLOWED_HOSTS = _unique(
+    [
+        ".railway.app",
+        ".up.railway.app",
+        _normalized_host(DEFAULT_PUBLIC_API_DOMAIN),
+        *[_normalized_host(value) for value in _csv_env("ALLOWED_HOSTS")],
+        *[
+            _normalized_host(value)
+            for value in _configured_values(
+                "RAILWAY_PUBLIC_DOMAIN",
+                "RAILWAY_PRIVATE_DOMAIN",
+                "CUSTOM_DOMAIN",
+            )
+        ],
+    ]
 )
 
 DATABASES = {
@@ -89,24 +134,18 @@ DATABASES = {
     )
 }
 
-CORS_ALLOWED_ORIGINS = list(
-    dict.fromkeys(
-        _configured_values("FRONTEND_URL", "ADMIN_FRONTEND_URL")
-        or [DEFAULT_FRONTEND_URL, DEFAULT_ADMIN_FRONTEND_URL]
-    )
-)
+CORS_ALLOWED_ORIGINS = CONFIGURED_FRONTEND_ORIGINS
 
-CSRF_TRUSTED_ORIGINS = list(
-    dict.fromkeys(
-        [
-            *CORS_ALLOWED_ORIGINS,
-            _https_origin(config("CUSTOM_DOMAIN", default=DEFAULT_PUBLIC_API_DOMAIN).strip()),
-            *[
-                _https_origin(value)
-                for value in _configured_values("RAILWAY_PUBLIC_DOMAIN", "CUSTOM_DOMAIN")
-            ],
-        ]
-    )
+CSRF_TRUSTED_ORIGINS = _unique(
+    [
+        *CORS_ALLOWED_ORIGINS,
+        *_csv_env_values("CSRF_TRUSTED_ORIGINS"),
+        _https_origin(config("CUSTOM_DOMAIN", default=DEFAULT_PUBLIC_API_DOMAIN).strip()),
+        *[
+            _https_origin(value)
+            for value in _configured_values("RAILWAY_PUBLIC_DOMAIN", "CUSTOM_DOMAIN")
+        ],
+    ]
 )
 
 _cloudinary = _cloudinary_config()
@@ -124,5 +163,7 @@ if EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
     EMAIL_USE_TLS = True
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)
+SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=3600, cast=int)
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True

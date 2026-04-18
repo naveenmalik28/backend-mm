@@ -5,6 +5,7 @@ db.sqlite3
 media/
 staticfiles/
 .env
+!.env.example
 .pytest_cache/
 .mypy_cache/
 .env.example
