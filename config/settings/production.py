@@ -1,5 +1,8 @@
+from urllib.parse import quote_plus
+
 import dj_database_url
 from decouple import config
+from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F401,F403
 
@@ -29,6 +32,37 @@ def _cloudinary_config():
     return values if all(values.values()) else None
 
 
+def _database_url():
+    configured_urls = _configured_values(
+        "DATABASE_URL",
+        "DATABASE_PRIVATE_URL",
+        "DATABASE_PUBLIC_URL",
+        "POSTGRES_URL",
+        "POSTGRESQL_URL",
+    )
+    if configured_urls:
+        return configured_urls[0]
+
+    host = config("PGHOST", default="").strip()
+    name = config("PGDATABASE", default="").strip()
+    user = config("PGUSER", default="").strip()
+    password = config("PGPASSWORD", default="").strip()
+    port = config("PGPORT", default="5432").strip() or "5432"
+
+    if all([host, name, user, password]):
+        return (
+            "postgresql://"
+            f"{quote_plus(user)}:{quote_plus(password)}"
+            f"@{host}:{port}/{quote_plus(name)}"
+        )
+
+    raise ImproperlyConfigured(
+        "Database is not configured for production. Set DATABASE_URL "
+        "(preferred), DATABASE_PRIVATE_URL, DATABASE_PUBLIC_URL, POSTGRES_URL, "
+        "POSTGRESQL_URL, or the PGHOST/PGDATABASE/PGUSER/PGPASSWORD env vars."
+    )
+
+
 DEBUG = False
 
 ALLOWED_HOSTS = list(
@@ -44,7 +78,7 @@ ALLOWED_HOSTS = list(
 
 DATABASES = {
     "default": dj_database_url.parse(
-        config("DATABASE_URL"),
+        _database_url(),
         conn_max_age=600,
         conn_health_checks=True,
     )
