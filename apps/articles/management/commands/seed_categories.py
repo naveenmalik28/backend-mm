@@ -2,14 +2,28 @@ from django.core.management.base import BaseCommand
 from apps.articles.models import Category
 
 NEW_CATEGORIES = [
-    {"name": "Technology & Innovation", "slug": "technology-innovation", "description": "The bleeding edge of tech and modern workflow innovation."},
-    {"name": "Artificial Intelligence", "slug": "artificial-intelligence", "description": "Neural networks, automation, and the future of AGI."},
-    {"name": "Science & Research", "slug": "science-research", "description": "Breakthrough papers, peer-reviewed analysis, and scientific discoveries."},
-    {"name": "Biomedical & Health", "slug": "biomedical-health", "description": "Biotech startups, medical advancements, and longevity research."},
-    {"name": "Business & Startups", "slug": "business-startups", "description": "Venture capital, bootstrapping, and enterprise strategy."},
-    {"name": "Education & Careers", "slug": "education-careers", "description": "The future of learning and the global workforce."},
-    {"name": "Society & Culture", "slug": "society-culture", "description": "Anthropology, philosophy, and modern cultural shifts."},
+    {"name": "AI", "slug": "ai", "description": "Artificial intelligence strategy, tools, models, and real-world adoption."},
+    {"name": "Technology", "slug": "technology", "description": "Emerging technology, product shifts, and the systems shaping modern life."},
+    {"name": "Software Development", "slug": "software-development", "description": "Engineering practice, developer tooling, architecture, and shipping software well."},
+    {"name": "Business & Startups", "slug": "business-startups", "description": "Founders, strategy, venture building, operations, and growth."},
+    {"name": "Digital Marketing", "slug": "digital-marketing", "description": "Search, content, social, demand generation, and digital brand building."},
+    {"name": "Data Science", "slug": "data-science", "description": "Analytics, machine learning workflows, experimentation, and data-driven decision-making."},
+    {"name": "Cybersecurity", "slug": "cybersecurity", "description": "Security trends, privacy, cyber risk, and digital resilience."},
+    {"name": "Health", "slug": "health", "description": "Health innovation, biomedical progress, care systems, and public health."},
+    {"name": "Science", "slug": "science", "description": "Scientific discovery, research breakthroughs, and evidence-based analysis."},
+    {"name": "Education", "slug": "education", "description": "Learning, careers, skills, and the future of education."},
+    {"name": "Society", "slug": "society", "description": "Culture, ethics, public life, and the ideas influencing society."},
 ]
+
+LEGACY_CATEGORY_REDIRECTS = {
+    "artificial-intelligence": "ai",
+    "technology-innovation": "technology",
+    "science-research": "science",
+    "biomedical-health": "health",
+    "business-startups": "business-startups",
+    "education-careers": "education",
+    "society-culture": "society",
+}
 
 class Command(BaseCommand):
     help = 'Seeds premium global categories into the database'
@@ -37,16 +51,34 @@ class Command(BaseCommand):
                 else:
                     self.stdout.write(self.style.WARNING(f"Exists: {category.name}"))
 
-        # 2. Cleanup unused old generic categories so they don't pollute the UI
+        # 2. Migrate known legacy categories into the new taxonomy.
+        for old_slug, target_slug in LEGACY_CATEGORY_REDIRECTS.items():
+            if old_slug == target_slug:
+                continue
+
+            legacy_category = Category.objects.filter(slug=old_slug).first()
+            target_category = Category.objects.filter(slug=target_slug).first()
+            if not legacy_category or not target_category:
+                continue
+
+            migrated_count = legacy_category.articles.update(category=target_category)
+            name = legacy_category.name
+            legacy_category.delete()
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Migrated {migrated_count} articles from '{name}' to '{target_category.name}'."
+                )
+            )
+
+        # 3. Cleanup unused old generic categories so they don't pollute the UI.
         allowed_slugs = [c["slug"] for c in NEW_CATEGORIES]
         old_cats = Category.objects.exclude(slug__in=allowed_slugs)
         
         if old_cats.exists():
-            self.stdout.write(f"Found {old_cats.count()} old categories. Migrating their articles to 'Society & Culture' and deleting...")
-            fallback = Category.objects.get(slug="society-culture")
+            self.stdout.write(f"Found {old_cats.count()} old categories. Migrating their articles to 'Society' and deleting...")
+            fallback = Category.objects.get(slug="society")
             
             for old in old_cats:
-                # Move articles to fallback
                 old.articles.update(category=fallback)
                 name = old.name
                 old.delete()

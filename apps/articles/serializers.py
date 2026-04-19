@@ -1,3 +1,4 @@
+from django.db.models import Q
 from django.core.exceptions import ImproperlyConfigured
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
@@ -129,12 +130,19 @@ class ArticleDetailSerializer(ArticleSerializer):
         fields = ArticleSerializer.Meta.fields + ("related_articles",)
 
     def get_related_articles(self, obj):
-        queryset = Article.objects.filter(status="published").exclude(id=obj.id)
-        if obj.category:
-            queryset = queryset.filter(category=obj.category)
-        
-        # Limit to 3 and serialize using the list serializer
-        related = queryset.order_by("-published_at")[:3]
+        queryset = (
+            Article.objects.filter(status=Article.STATUS_PUBLISHED)
+            .exclude(id=obj.id)
+            .select_related("author", "category")
+            .prefetch_related("tags")
+        )
+        if obj.category_id:
+            tag_ids = list(obj.tags.values_list("id", flat=True))
+            queryset = queryset.filter(
+                Q(category_id=obj.category_id) | Q(tags__in=tag_ids)
+            ).distinct()
+
+        related = queryset.order_by("-view_count", "-published_at")[:3]
         return ArticleSerializer(related, many=True).data
 
 

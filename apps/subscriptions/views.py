@@ -1,104 +1,142 @@
-import hashlib
-import hmac
-
 from django.conf import settings
+from django.core.cache import cache
+from django.db.models import Case, IntegerField, Prefetch, Value, When
 from django.shortcuts import get_object_or_404
-from rest_framework.exceptions import ValidationError
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Payment, Plan, Subscription
-from .serializers import PlanSerializer, SubscriptionSerializer
-
-
-SUPPORTED_CHECKOUT_CURRENCIES = {"INR", "USD"}
-
-
-def resolve_plan_amount(plan, requested_currency):
-    currency = (requested_currency or "INR").upper()
-    if currency not in SUPPORTED_CHECKOUT_CURRENCIES:
-        raise ValidationError({"currency": "Unsupported currency. Use INR or USD."})
-
-    if currency == "USD":
-        if plan.price_usd <= 0:
-            raise ValidationError({"currency": "USD pricing is not configured for this plan."})
-        return plan.price_usd, "USD"
-
-    return plan.price, "INR"
+from .serializers import (
+    CheckoutSerializer,
+    PaymentVerifySerializer,
+    PlanSerializer,
+    SubscriptionSerializer,
+)
+from .services import (
+    PLAN_LIST_CACHE_KEY,
+    create_checkout_session,
+    expire_user_subscriptions,
+    get_active_plans,
+    process_razorpay_webhook,
+    process_successful_payment,
+)
+from .throttles import CheckoutThrottle, PaymentVerifyThrottle, PaymentWebhookThrottle
 
 
 class PlanListView(generics.ListAPIView):
-    queryset = Plan.objects.filter(is_active=True)
     permission_classes = [permissions.AllowAny]
     serializer_class = PlanSerializer
     pagination_class = None
 
+    def list(self, request, *args, **kwargs):
+        cached_payload = cache.get(PLAN_LIST_CACHE_KEY)
+        if cached_payload is not None:
+            return Response(cached_payload)
+
+        data = self.get_serializer(get_active_plans(), many=True).data
+        cache.set(PLAN_LIST_CACHE_KEY, data, timeout=getattr(settings, "SUBSCRIPTION_PLAN_CACHE_TTL", 900))
+        return Response(data)
+
 
 class CheckoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [CheckoutThrottle]
 
     def post(self, request):
-        import razorpay
+        serializer = CheckoutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        plan_id = request.data.get("plan_id")
-        plan = get_object_or_404(Plan, id=plan_id, is_active=True)
-        amount, order_currency = resolve_plan_amount(plan, request.data.get("currency"))
-
-        subscription = Subscription.objects.create(user=request.user, plan=plan)
-        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-        order = client.order.create({
-            "amount": int(amount * 100),
-            "currency": order_currency,
-            "receipt": str(subscription.id),
-        })
-        return Response({
-            "order_id": order["id"],
-            "amount": order["amount"],
-            "currency": order["currency"],
-            "subscription_id": str(subscription.id),
-            "razorpay_key": settings.RAZORPAY_KEY_ID,
-            "plan": PlanSerializer(plan).data,
-        })
+        plan = get_object_or_404(Plan, id=serializer.validated_data["plan_id"], is_active=True)
+        subscription, order = create_checkout_session(
+            user=request.user,
+            plan=plan,
+            requested_currency=serializer.validated_data.get("currency"),
+        )
+        return Response(
+            {
+                "order_id": order["id"],
+                "amount": order["amount"],
+                "currency": order["currency"],
+                "subscription_id": str(subscription.id),
+                "razorpay_key": settings.RAZORPAY_KEY_ID,
+                "plan": PlanSerializer(plan).data,
+            }
+        )
 
 
 class PaymentVerifyView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [PaymentVerifyThrottle]
 
     def post(self, request):
-        data = request.data
-        subscription = get_object_or_404(Subscription, id=data.get("subscription_id"), user=request.user)
-        message = f"{data.get('razorpay_order_id')}|{data.get('razorpay_payment_id')}".encode()
-        generated_sig = hmac.new(
-            settings.RAZORPAY_KEY_SECRET.encode(),
-            message,
-            hashlib.sha256,
-        ).hexdigest()
-        if generated_sig != data.get("razorpay_signature"):
-            return Response({"error": "Invalid signature"}, status=status.HTTP_400_BAD_REQUEST)
-
-        amount, currency = resolve_plan_amount(subscription.plan, data.get("currency"))
-
-        Payment.objects.create(
-            subscription=subscription,
+        serializer = PaymentVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        _, subscription, created = process_successful_payment(
             user=request.user,
-            amount=amount,
-            currency=currency,
-            payment_gateway="razorpay",
-            gateway_order_id=data.get("razorpay_order_id", ""),
-            gateway_payment_id=data.get("razorpay_payment_id", ""),
-            gateway_signature=data.get("razorpay_signature", ""),
-            status=Payment.STATUS_SUCCESS,
+            subscription_id=serializer.validated_data["subscription_id"],
+            order_id=serializer.validated_data["razorpay_order_id"],
+            payment_id=serializer.validated_data["razorpay_payment_id"],
+            signature=serializer.validated_data["razorpay_signature"],
+            requested_currency=serializer.validated_data.get("currency"),
         )
-        subscription.activate()
-        return Response({"status": "subscription activated"})
+        return Response(
+            {
+                "status": "subscription activated" if created else "payment already processed",
+                "subscription": SubscriptionSerializer(subscription).data,
+            }
+        )
+
+
+class RazorpayWebhookView(APIView):
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [PaymentWebhookThrottle]
+
+    def post(self, request):
+        event, processed = process_razorpay_webhook(
+            raw_body=request.body,
+            signature=request.headers.get("X-Razorpay-Signature"),
+        )
+        return Response({"received": True, "event": event, "processed": processed})
 
 
 class CurrentSubscriptionView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        subscription = request.user.subscriptions.select_related("plan").prefetch_related("payments").first()
+        expire_user_subscriptions(request.user)
+        subscription = (
+            Subscription.objects.select_related("plan", "user")
+            .prefetch_related(
+                Prefetch(
+                    "payments",
+                    queryset=Payment.objects.only(
+                        "id",
+                        "subscription_id",
+                        "user_id",
+                        "amount",
+                        "currency",
+                        "payment_gateway",
+                        "status",
+                        "created_at",
+                    ).order_by("-created_at"),
+                )
+            )
+            .filter(user=request.user)
+            .exclude(status=Subscription.STATUS_CANCELLED)
+            .order_by(
+                Case(
+                    When(status=Subscription.STATUS_ACTIVE, then=Value(0)),
+                    When(status=Subscription.STATUS_PENDING, then=Value(1)),
+                    When(status=Subscription.STATUS_EXPIRED, then=Value(2)),
+                    default=Value(3),
+                    output_field=IntegerField(),
+                ),
+                "-created_at",
+            )
+            .first()
+        )
         if not subscription:
             return Response({"detail": "No subscription found."}, status=status.HTTP_404_NOT_FOUND)
         return Response(SubscriptionSerializer(subscription).data)

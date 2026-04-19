@@ -149,7 +149,13 @@ class CategoryViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
     def get_queryset(self):
-        return Category.objects.annotate(article_count=Count("articles")).order_by("name")
+        return Category.objects.annotate(
+            article_count=Count(
+                "articles",
+                filter=Q(articles__status=Article.STATUS_PUBLISHED),
+                distinct=True,
+            )
+        ).order_by("name")
 
 
 class TagViewSet(viewsets.ModelViewSet):
@@ -158,7 +164,13 @@ class TagViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
     def get_queryset(self):
-        return Tag.objects.annotate(article_count=Count("articles")).order_by("name")
+        return Tag.objects.annotate(
+            article_count=Count(
+                "articles",
+                filter=Q(articles__status=Article.STATUS_PUBLISHED),
+                distinct=True,
+            )
+        ).order_by("name")
 
 
 # Create your views here.

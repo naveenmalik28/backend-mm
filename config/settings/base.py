@@ -127,7 +127,30 @@ DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@magnivelmedia
 
 RAZORPAY_KEY_ID = config("RAZORPAY_KEY_ID", default="")
 RAZORPAY_KEY_SECRET = config("RAZORPAY_KEY_SECRET", default="")
+RAZORPAY_WEBHOOK_SECRET = config("RAZORPAY_WEBHOOK_SECRET", default="")
+
+REDIS_URL = config("REDIS_URL", default="").strip()
+CACHES = {
+    "default": (
+        {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+        }
+        if REDIS_URL
+        else {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "magnivel-media-cache",
+        }
+    )
+}
+SUBSCRIPTION_PLAN_CACHE_TTL = config("SUBSCRIPTION_PLAN_CACHE_TTL", default=900, cast=int)
 
 CELERY_TASK_ALWAYS_EAGER = env_flag("CELERY_TASK_ALWAYS_EAGER", default=False)
-CELERY_BROKER_URL = config("REDIS_URL", default="redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = config("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_BROKER_URL = REDIS_URL or "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = REDIS_URL or "redis://localhost:6379/0"
+
+REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
+    "subscription_checkout": "10/hour",
+    "subscription_verify": "30/hour",
+    "subscription_webhook": "120/min",
+}

@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import models
+from django.db.models import F, Q
 from django.utils import timezone
 
 
@@ -21,7 +22,10 @@ class Plan(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["sort_order", "price"]
+        ordering = ["sort_order", "price", "id"]
+        indexes = [
+            models.Index(fields=["is_active", "sort_order", "price"], name="plan_active_sort_idx"),
+        ]
 
     def __str__(self):
         return self.name
@@ -51,16 +55,36 @@ class Subscription(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "status", "created_at"], name="subscription_user_status_idx"),
+            models.Index(fields=["status", "expires_at"], name="subscription_status_expiry_idx"),
+            models.Index(fields=["plan", "status"], name="subscription_plan_status_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=Q(status="active"),
+                name="uniq_active_subscription_per_user",
+            ),
+            models.CheckConstraint(
+                check=Q(starts_at__isnull=True)
+                | Q(expires_at__isnull=True)
+                | Q(expires_at__gt=F("starts_at")),
+                name="subscription_expiry_after_start",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.user.email} - {self.plan.name}"
 
-    def activate(self):
-        now = timezone.now()
+    def activate(self, *, at=None, save=True):
+        now = at or timezone.now()
         self.starts_at = now
         self.expires_at = now + timedelta(days=self.plan.duration_days)
         self.status = self.STATUS_ACTIVE
-        self.save()
+        if save:
+            self.save(update_fields=["starts_at", "expires_at", "status", "updated_at"])
+        return self
 
 
 class Payment(models.Model):
@@ -83,6 +107,23 @@ class Payment(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "status", "created_at"], name="payment_user_status_idx"),
+            models.Index(fields=["subscription", "status", "created_at"], name="payment_sub_status_idx"),
+            models.Index(fields=["payment_gateway", "created_at"], name="payment_gateway_created_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["payment_gateway", "gateway_order_id"],
+                condition=~Q(gateway_order_id=""),
+                name="uniq_payment_gateway_order_id",
+            ),
+            models.UniqueConstraint(
+                fields=["payment_gateway", "gateway_payment_id"],
+                condition=~Q(gateway_payment_id=""),
+                name="uniq_payment_gateway_payment_id",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.user.email} - {self.status}"

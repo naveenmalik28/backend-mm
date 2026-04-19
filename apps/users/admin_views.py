@@ -1,5 +1,8 @@
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
-from django.db.models import Count
+from django.db.models import Count, Q, Sum
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
@@ -15,7 +18,12 @@ from apps.articles.serializers import (
 )
 from apps.comments.models import Comment
 from apps.subscriptions.models import Payment, Plan, Subscription
-from apps.subscriptions.serializers import AdminPlanSerializer, PaymentSerializer, SubscriptionSerializer
+from apps.subscriptions.serializers import (
+    AdminPaymentSerializer,
+    AdminPlanSerializer,
+    AdminSubscriptionSerializer,
+)
+from utils.pagination import AdminResultsSetPagination
 
 from .serializers import UserSerializer
 
@@ -26,6 +34,20 @@ class AdminSummaryView(APIView):
     permission_classes = [permissions.IsAdminUser]
 
     def get(self, request):
+        payment_totals = Payment.objects.aggregate(
+            successful_revenue_inr=Coalesce(
+                Sum("amount", filter=Q(status=Payment.STATUS_SUCCESS, currency__iexact="INR")),
+                Decimal("0.00"),
+            ),
+            successful_revenue_usd=Coalesce(
+                Sum("amount", filter=Q(status=Payment.STATUS_SUCCESS, currency__iexact="USD")),
+                Decimal("0.00"),
+            ),
+            successful_payments=Coalesce(
+                Count("id", filter=Q(status=Payment.STATUS_SUCCESS)),
+                0,
+            ),
+        )
         return Response({
             "users": User.objects.count(),
             "articles": Article.objects.count(),
@@ -38,6 +60,9 @@ class AdminSummaryView(APIView):
             "subscriptions": Subscription.objects.count(),
             "active_subscriptions": Subscription.objects.filter(status=Subscription.STATUS_ACTIVE).count(),
             "payments": Payment.objects.count(),
+            "successful_payments": payment_totals["successful_payments"],
+            "successful_revenue_inr": payment_totals["successful_revenue_inr"],
+            "successful_revenue_usd": payment_totals["successful_revenue_usd"],
             "recent_articles": ArticleSerializer(
                 Article.objects.select_related("author", "category").prefetch_related("tags").order_by("-created_at")[:5],
                 many=True,
@@ -191,16 +216,16 @@ class AdminCommentDeleteView(APIView):
 
 class AdminSubscriptionListView(generics.ListAPIView):
     permission_classes = [permissions.IsAdminUser]
-    serializer_class = SubscriptionSerializer
-    pagination_class = None
-    queryset = Subscription.objects.select_related("plan", "user").prefetch_related("payments").all()
+    serializer_class = AdminSubscriptionSerializer
+    pagination_class = AdminResultsSetPagination
+    queryset = Subscription.objects.select_related("plan", "user").all()
 
 
 class AdminPaymentListView(generics.ListAPIView):
     permission_classes = [permissions.IsAdminUser]
-    serializer_class = PaymentSerializer
-    pagination_class = None
-    queryset = Payment.objects.select_related("user", "subscription").all()
+    serializer_class = AdminPaymentSerializer
+    pagination_class = AdminResultsSetPagination
+    queryset = Payment.objects.select_related("user").all()
 
 
 # ---------------------------------------------------------------------------
