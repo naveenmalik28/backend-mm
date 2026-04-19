@@ -1,8 +1,8 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
-    "preDeployCommand": "python manage.py migrate --settings=config.settings.production --noinput",
-    "startCommand": "DJANGO_SETTINGS_MODULE=config.settings.production gunicorn config.wsgi:application --log-file -",
+    "preDeployCommand": "python manage.py migrate --settings=config.settings.production --noinput && python manage.py collectstatic --settings=config.settings.production --noinput",
+    "startCommand": "gunicorn config.wsgi:application --env DJANGO_SETTINGS_MODULE=config.settings.production --bind 0.0.0.0:${PORT:-8000} --log-file -",
     "healthcheckPath": "/api/health/"
   }
 }

@@ -80,6 +80,8 @@ if not CONFIGURED_FRONTEND_ORIGINS:
 
 ALLOWED_HOSTS = _unique(
     [
+        "localhost",
+        "127.0.0.1",
         ".railway.app",
         ".up.railway.app",
         _normalized_host(DEFAULT_PUBLIC_API_DOMAIN),
@@ -133,6 +135,7 @@ if EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)
+SECURE_REDIRECT_EXEMPT = [r"^api/health/$"]
 SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=3600, cast=int)
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
