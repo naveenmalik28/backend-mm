@@ -1,4 +1,7 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -106,3 +109,133 @@ class CategoryTagApiTests(APITestCase):
         self.assertEqual(category_response.status_code, status.HTTP_200_OK)
         self.assertEqual(category_response.data["count"], 1)
         self.assertEqual(tag_response.data["count"], 1)
+
+    def test_article_create_with_cover_image_file_uploads_to_cloudinary_and_saves_url(self):
+        self.client.force_authenticate(self.admin)
+
+        with patch("apps.articles.serializers.upload_article_image") as mocked_upload:
+            mocked_upload.return_value = {
+                "url": "https://res.cloudinary.com/demo/image/upload/articles/covers/test-image.jpg",
+                "public_id": "articles/covers/test-image",
+                "storage": "cloudinary",
+            }
+            response = self.client.post(
+                reverse("article-list-create"),
+                {
+                    "title": "Cloudinary-backed article",
+                    "excerpt": "Cover image should be stored as a URL.",
+                    "content": "A long-form story with a direct file upload.",
+                    "status": Article.STATUS_DRAFT,
+                    "category_id": self.category.id,
+                    "tag_ids": [self.tag.id],
+                    "cover_image_file": SimpleUploadedFile(
+                        "cover.jpg",
+                        b"fake-image-bytes",
+                        content_type="image/jpeg",
+                    ),
+                },
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data["cover_image"],
+            "https://res.cloudinary.com/demo/image/upload/articles/covers/test-image.jpg",
+        )
+        article = Article.objects.get(pk=response.data["id"])
+        self.assertEqual(
+            article.cover_image,
+            "https://res.cloudinary.com/demo/image/upload/articles/covers/test-image.jpg",
+        )
+        mocked_upload.assert_called_once()
+
+    def test_article_update_with_cover_image_file_replaces_stored_cover_image_url(self):
+        article = Article.objects.create(
+            author=self.author,
+            category=self.category,
+            title="Existing article",
+            excerpt="Before the new image upload.",
+            content="Existing content body.",
+            cover_image="https://example.com/original-cover.jpg",
+        )
+        article.tags.add(self.tag)
+
+        self.client.force_authenticate(self.author)
+
+        with patch("apps.articles.serializers.upload_article_image") as mocked_upload:
+            mocked_upload.return_value = {
+                "url": "https://res.cloudinary.com/demo/image/upload/articles/covers/updated-image.jpg",
+                "public_id": "articles/covers/updated-image",
+                "storage": "cloudinary",
+            }
+            response = self.client.patch(
+                reverse("article-detail", args=[article.pk]),
+                {
+                    "cover_image_file": SimpleUploadedFile(
+                        "updated-cover.jpg",
+                        b"fake-image-bytes",
+                        content_type="image/jpeg",
+                    ),
+                },
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data["cover_image"],
+            "https://res.cloudinary.com/demo/image/upload/articles/covers/updated-image.jpg",
+        )
+        article.refresh_from_db()
+        self.assertEqual(
+            article.cover_image,
+            "https://res.cloudinary.com/demo/image/upload/articles/covers/updated-image.jpg",
+        )
+        mocked_upload.assert_called_once()
+
+    def test_authenticated_user_can_upload_article_image_to_cloudinary(self):
+        self.client.force_authenticate(self.author)
+
+        with patch("apps.articles.uploads.is_cloudinary_configured", return_value=True), patch(
+            "apps.articles.uploads.cloudinary.uploader.upload",
+            return_value={
+                "secure_url": "https://res.cloudinary.com/demo/image/upload/articles/covers/test-image.jpg",
+                "public_id": "articles/covers/test-image",
+            },
+        ) as mocked_upload:
+            response = self.client.post(
+                reverse("article-upload-image"),
+                {"image": SimpleUploadedFile("cover.jpg", b"fake-image-bytes", content_type="image/jpeg")},
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data["url"],
+            "https://res.cloudinary.com/demo/image/upload/articles/covers/test-image.jpg",
+        )
+        self.assertEqual(response.data["storage"], "cloudinary")
+        mocked_upload.assert_called_once()
+
+    def test_production_upload_requires_cloudinary_configuration(self):
+        self.client.force_authenticate(self.author)
+
+        with patch("apps.articles.uploads.is_cloudinary_configured", return_value=False), patch(
+            "apps.articles.uploads.settings.DEBUG",
+            False,
+        ):
+            response = self.client.post(
+                reverse("article-upload-image"),
+                {"image": SimpleUploadedFile("cover.jpg", b"fake-image-bytes", content_type="image/jpeg")},
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertIn("Cloudinary is required", response.data["error"])
+
+    def test_upload_rejects_missing_image(self):
+        self.client.force_authenticate(self.author)
+
+        response = self.client.post(reverse("article-upload-image"), {}, format="multipart")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["error"], "No image provided")

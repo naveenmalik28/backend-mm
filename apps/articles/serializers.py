@@ -1,8 +1,23 @@
+from django.core.exceptions import ImproperlyConfigured
 from rest_framework import serializers
+from rest_framework.exceptions import APIException
 
 from apps.users.serializers import UserSerializer
 
 from .models import Article, Category, Tag, SiteSettings
+from .uploads import upload_article_image
+
+
+class ImageUploadUnavailable(APIException):
+    status_code = 503
+    default_detail = "Image uploads are unavailable right now."
+    default_code = "image_upload_unavailable"
+
+
+class ImageUploadFailed(APIException):
+    status_code = 502
+    default_detail = "Image upload failed."
+    default_code = "image_upload_failed"
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -31,6 +46,7 @@ class ArticleSerializer(serializers.ModelSerializer):
     author = UserSerializer(read_only=True)
     category = CategorySerializer(read_only=True)
     tags = TagSerializer(read_only=True, many=True)
+    cover_image_file = serializers.FileField(write_only=True, required=False, allow_null=True)
     category_id = serializers.PrimaryKeyRelatedField(
         source="category",
         queryset=Category.objects.all(),
@@ -60,6 +76,7 @@ class ArticleSerializer(serializers.ModelSerializer):
             "excerpt",
             "content",
             "cover_image",
+            "cover_image_file",
             "status",
             "is_featured",
             "view_count",
@@ -70,8 +87,25 @@ class ArticleSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("id", "slug", "view_count", "read_time", "published_at", "created_at", "updated_at")
 
+    def _attach_uploaded_cover_image(self, validated_data):
+        image_file = validated_data.pop("cover_image_file", None)
+        if not image_file:
+            return
+
+        try:
+            upload_result = upload_article_image(image_file)
+        except ValueError as exc:
+            raise serializers.ValidationError({"cover_image_file": [str(exc)]}) from exc
+        except ImproperlyConfigured as exc:
+            raise ImageUploadUnavailable(str(exc)) from exc
+        except RuntimeError as exc:
+            raise ImageUploadFailed(str(exc)) from exc
+
+        validated_data["cover_image"] = upload_result["url"]
+
     def create(self, validated_data):
         tags = validated_data.pop("tags", [])
+        self._attach_uploaded_cover_image(validated_data)
         article = Article.objects.create(**validated_data)
         if tags:
             article.tags.set(tags)
@@ -79,6 +113,7 @@ class ArticleSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         tags = validated_data.pop("tags", None)
+        self._attach_uploaded_cover_image(validated_data)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()

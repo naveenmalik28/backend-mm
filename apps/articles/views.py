@@ -1,5 +1,6 @@
 from django.db.models import Count, F, Q
 from django.shortcuts import get_object_or_404
+from django.core.exceptions import ImproperlyConfigured
 from rest_framework.exceptions import PermissionDenied
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.response import Response
@@ -11,8 +12,8 @@ from .filters import filter_article_queryset
 from .models import Article, Category, Tag
 from .pagination import ArticlePagination
 from .serializers import ArticleSerializer, ArticleDetailSerializer, CategorySerializer, TagSerializer
-from django.core.files.storage import default_storage
 from rest_framework.parsers import MultiPartParser, FormParser
+from .uploads import upload_article_image
 
 class ImageUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -21,12 +22,20 @@ class ImageUploadView(APIView):
     def post(self, request):
         if 'image' not in request.FILES:
             return Response({"error": "No image provided"}, status=status.HTTP_400_BAD_REQUEST)
-        
-        image_file = request.FILES['image']
-        file_name = default_storage.save(f"articles/covers/{image_file.name}", image_file)
-        file_url = request.build_absolute_uri(default_storage.url(file_name))
-        
-        return Response({"url": file_url})
+
+        try:
+            upload_result = upload_article_image(request.FILES["image"])
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except ImproperlyConfigured as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except RuntimeError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if not upload_result["url"].startswith(("http://", "https://")):
+            upload_result["url"] = request.build_absolute_uri(upload_result["url"])
+
+        return Response(upload_result, status=status.HTTP_201_CREATED)
 
 
 class ArticleListCreateView(generics.ListCreateAPIView):
