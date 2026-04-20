@@ -28,9 +28,7 @@ def resolve_plan_amount(plan, requested_currency):
     if currency not in SUPPORTED_CHECKOUT_CURRENCIES:
         raise ValidationError({"currency": "Unsupported currency. Use INR or USD."})
 
-    if currency == "USD":
-        if plan.price_usd <= 0:
-            raise ValidationError({"currency": "USD pricing is not configured for this plan."})
+    if currency == "USD" and plan.price_usd > 0:
         return plan.price_usd, "USD"
 
     return plan.price, "INR"
