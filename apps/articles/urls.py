@@ -10,6 +10,7 @@ from .views import (
     MyArticlesView,
     PublishArticleView,
     TagViewSet,
+    MyArticleStatsView,
 )
 
 router = DefaultRouter()
@@ -20,6 +21,7 @@ urlpatterns = [
     path("articles/", ArticleListCreateView.as_view(), name="article-list-create"),
     path("articles/upload-image/", ImageUploadView.as_view(), name="article-upload-image"),
     path("articles/my/", MyArticlesView.as_view(), name="article-my-list"),
+    path("articles/my/stats/", MyArticleStatsView.as_view(), name="article-my-stats"),
     path("articles/<str:identifier>/", ArticleDetailView.as_view(), name="article-detail"),
     path("articles/<uuid:pk>/publish/", PublishArticleView.as_view(), name="article-publish"),
     path("articles/<uuid:pk>/increment_view/", IncrementArticleView.as_view(), name="article-increment-view"),

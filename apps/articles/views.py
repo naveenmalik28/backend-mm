@@ -1,4 +1,5 @@
-from django.db.models import Count, F, Q
+from django.db.models import Count, F, Q, Sum, Avg
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ImproperlyConfigured
 from rest_framework.exceptions import PermissionDenied
@@ -174,3 +175,17 @@ class TagViewSet(viewsets.ModelViewSet):
 
 
 # Create your views here.
+
+class MyArticleStatsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        stats = Article.objects.filter(
+            author=request.user,
+            status=Article.STATUS_PUBLISHED
+        ).aggregate(
+            total_views=Coalesce(Sum('view_count'), 0),
+            total_articles=Count('id'),
+            avg_read_time=Coalesce(Avg('read_time'), 0.0)
+        )
+        return Response(stats)
