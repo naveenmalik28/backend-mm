@@ -2,6 +2,7 @@ from .base import *  # noqa: F401,F403
 
 
 DEBUG = False
+SECURE_SSL_REDIRECT = False
 
 DATABASES = {
     "default": {
